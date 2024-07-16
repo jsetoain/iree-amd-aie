@@ -6,8 +6,14 @@
 
 #include "iree-amd-aie/Transforms/Passes.h"
 #include "llvm/ADT/STLExtras.h"
+#include "llvm/Support/Debug.h"
 #include "mlir/Dialect/Linalg/Transforms/Transforms.h"
+#include "mlir/Dialect/SCF/Utils/Utils.h"
 #include "iree-amd-aie/Transforms/AMDAIEUtils.h"
+
+#define DEBUG_TYPE "ins-loops-for-vec"
+#define DBGS() (llvm::dbgs() << '[' << DEBUG_TYPE << "] ")
+#define LDBG(X) LLVM_DEBUG(DBGS() << X << "\n")
 
 namespace mlir::iree_compiler::AMDAIE {
 
@@ -59,8 +65,17 @@ class AMDAIEInsertLoopsForVectorizationPass
     auto opts = linalg::LinalgTilingOptions().setTileSizes(tileSizes);
     auto tiled = linalg::tileLinalgOp(rewriter, genericOp, opts);
     const auto &loops = tiled.value().loops;
+
     assert(!loops.empty() && "expected at least one loop here");
-    rewriter.replaceOp(genericOp, loops[0]->getResult(0));
+    auto l0 = cast<scf::ForOp>(loops[0]);
+    if (loops.size() > 1) {
+      auto l1 = cast<scf::ForOp>(loops[1]);
+      if (!succeeded(loopUnrollJamByFactor(l1, 2)) ||
+          !succeeded(loopUnrollJamByFactor(l0, 2)))
+        LDBG("failed to unroll and jam the two outermost tile loops");
+    }
+
+    rewriter.replaceOp(genericOp, l0->getResult(0));
   }
 
   // Return success if the generic op is rewritten, failure otherwise.
